@@ -1072,68 +1072,66 @@ function dotTexture() {
 }
 const DOT = dotTexture();
 const DPR = () => renderer.getPixelRatio();
-function ringTexture(r0, r1, dot) {
-  // hollow ring with a small centre dot: the body under the acupoint stays visible
-  const c = document.createElement('canvas'); c.width = c.height = 128;
-  const g = c.getContext('2d'); g.fillStyle = '#fff';
-  g.beginPath(); g.arc(64, 64, r1, 0, Math.PI * 2); g.arc(64, 64, r0, 0, Math.PI * 2, true); g.fill();
-  g.beginPath(); g.arc(64, 64, dot, 0, Math.PI * 2); g.fill();
-  const t = new THREE.CanvasTexture(c); return t;
+/* surface markers: small flat discs lying on the skin, turned to the surface normal and sized in body units,
+   so they sit on the body like a pen mark and grow or shrink with zoom (never smaller than a few pixels) */
+const MK = { r: 0.34, rim: 0.5, selR: 0.55, selRim: 0.75, minPx: 7, up: 0.4 };
+const discGeo = new THREE.CircleGeometry(1, 28);
+function markerMat(order) {
+  return new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false, side: THREE.DoubleSide,
+    polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 * order });
 }
-const RING_HALO = ringTexture(34, 62, 17), RING_CORE = ringTexture(42, 54, 9);
-function liftToCamera(mat, cm) {
-  // draw the marker a little toward the viewer, so the surface it sits on never slices the disc,
-  // while parts of the body that are really in front still hide it
-  mat.onBeforeCompile = sh => {
-    sh.vertexShader = sh.vertexShader.replace('#include <project_vertex>',
-      '#include <project_vertex>\n  mvPosition.xyz += normalize( -mvPosition.xyz ) * ' + cm.toFixed(2) + ';\n  gl_Position = projectionMatrix * mvPosition;');
-  };
-  mat.customProgramCacheKey = () => 'lift-' + cm;
-  return mat;
-}
-const haloMat = liftToCamera(new THREE.PointsMaterial({ size: 19, sizeAttenuation: false, map: RING_HALO, alphaTest: 0.5, color: 0xffffff, transparent: false, toneMapped: false }), 1.0);
-const coreMat = liftToCamera(new THREE.PointsMaterial({ size: 19, sizeAttenuation: false, map: RING_CORE, alphaTest: 0.5, vertexColors: true, toneMapped: false }), 1.0);
-const selHaloMat = liftToCamera(new THREE.PointsMaterial({ size: 28, sizeAttenuation: false, map: RING_HALO, alphaTest: 0.5, color: 0xffffff, toneMapped: false }), 1.0);
-const selCoreMat = liftToCamera(new THREE.PointsMaterial({ size: 28, sizeAttenuation: false, map: RING_CORE, alphaTest: 0.5, vertexColors: true, toneMapped: false }), 1.0);
+const haloMat = markerMat(1), coreMat = markerMat(2), selHaloMat = markerMat(3), selCoreMat = markerMat(4);
 const markerGroup = new THREE.Group(); scene.add(markerGroup);
-let haloPts, corePts, selHalo, selCore;
+let haloPts, corePts, selHalo, selCore, markerList = [], markerScale = 1;
 function visibleInst() { return INST.filter(i => (merFilter === 'ALL' || i.pt.mer === merFilter) && (!starOnly || i.pt.star) && (!pickOnly || picks.has(i.pt.code))); }
+const _mq = new THREE.Quaternion(), _mz = new THREE.Vector3(0, 0, 1), _mm = new THREE.Matrix4(), _ms = new THREE.Vector3(), _mp = new THREE.Vector3();
+function markerMatrix(out, m, r, up) {
+  _mq.setFromUnitVectors(_mz, m.nUnit || (m.nUnit = m.n.clone().normalize()));
+  _mp.copy(m.pos).addScaledVector(m.nUnit, up);
+  _ms.setScalar(r * markerScale);
+  return out.compose(_mp, _mq, _ms);
+}
 function buildMarkers() {
   markerGroup.clear();
-  const list = visibleInst();
-  const pos = new Float32Array(list.length * 3), col = new Float32Array(list.length * 3);
-  list.forEach((m, i) => {
-    pos.set([m.lift.x, m.lift.y, m.lift.z], i * 3);
-    const c = new THREE.Color(MER_COLOR[m.pt.mer]).convertSRGBToLinear(); col.set([c.r, c.g, c.b], i * 3);
-  });
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  haloPts = new THREE.Points(g, haloMat); corePts = new THREE.Points(g, coreMat);
-  haloPts.renderOrder = 6; corePts.renderOrder = 7;
-  markerGroup.add(haloPts, corePts);
-  const sg = new THREE.BufferGeometry();
-  sg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(3), 3));
-  sg.setAttribute('color', new THREE.BufferAttribute(new Float32Array(3), 3));
-  selHalo = new THREE.Points(sg, selHaloMat); selCore = new THREE.Points(sg, selCoreMat);
-  selHalo.renderOrder = 8; selCore.renderOrder = 9;
-  markerGroup.add(selHalo, selCore);
-  sizeMarkers(); updateSelMarker(); requestRender();
+  markerList = visibleInst();
+  const n = Math.max(markerList.length, 1);
+  haloPts = new THREE.InstancedMesh(discGeo, haloMat, n); corePts = new THREE.InstancedMesh(discGeo, coreMat, n);
+  haloPts.count = corePts.count = markerList.length;
+  const c = new THREE.Color();
+  markerList.forEach((m, i) => corePts.setColorAt(i, c.set(MER_COLOR[m.pt.mer]).convertSRGBToLinear()));
+  if (corePts.instanceColor) corePts.instanceColor.needsUpdate = true;
+  selHalo = new THREE.Mesh(discGeo, selHaloMat); selCore = new THREE.Mesh(discGeo, selCoreMat);
+  selHalo.matrixAutoUpdate = selCore.matrixAutoUpdate = false;
+  haloPts.renderOrder = 6; corePts.renderOrder = 7; selHalo.renderOrder = 8; selCore.renderOrder = 9;
+  [haloPts, corePts, selHalo, selCore].forEach(o => { o.frustumCulled = false; });
+  markerGroup.add(haloPts, corePts, selHalo, selCore);
+  markerScale = -1; sizeMarkers(); updateSelMarker(); requestRender();
 }
 function sizeMarkers() {
-  const k = DPR();
-  haloMat.size = 19 * k; coreMat.size = 19 * k; selHaloMat.size = 28 * k; selCoreMat.size = 28 * k;
+  if (!haloPts) return;
+  // body-sized discs, but kept at least MK.minPx wide on screen when zoomed far out
+  const dist = camera.position.distanceTo(controls.target);
+  const h = renderer.domElement.clientHeight || 600;
+  const pxPerCm = h / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * dist);
+  const s = Math.max(1, MK.minPx / (2 * MK.r * pxPerCm));
+  if (markerScale > 0 && Math.abs(s - markerScale) < 0.02 * markerScale) return;
+  markerScale = s;
+  markerList.forEach((m, i) => {
+    haloPts.setMatrixAt(i, markerMatrix(_mm, m, MK.rim, MK.up));
+    corePts.setMatrixAt(i, markerMatrix(_mm, m, MK.r, MK.up + 0.03));
+  });
+  haloPts.instanceMatrix.needsUpdate = corePts.instanceMatrix.needsUpdate = true;
+  updateSelMarker(true);
 }
-function updateSelMarker() {
+function updateSelMarker(noRender) {
   if (!selHalo) return;
   selHalo.visible = selCore.visible = !!selPt;
   if (selPt) {
-    const g = selHalo.geometry;
-    g.attributes.position.array.set([selPt.lift.x, selPt.lift.y, selPt.lift.z]); g.attributes.position.needsUpdate = true;
-    const c = new THREE.Color(MER_COLOR[selPt.pt.mer]).convertSRGBToLinear(); g.attributes.color.array.set([c.r, c.g, c.b]); g.attributes.color.needsUpdate = true;
-    g.computeBoundingSphere();
+    markerMatrix(selHalo.matrix, selPt, MK.selRim, MK.up + 0.06); markerMatrix(selCore.matrix, selPt, MK.selR, MK.up + 0.09);
+    selHalo.matrixWorldNeedsUpdate = selCore.matrixWorldNeedsUpdate = true;
+    selCoreMat.color.set(MER_COLOR[selPt.pt.mer]).convertSRGBToLinear();
   }
-  requestRender();
+  if (!noRender) requestRender();
 }
 function applyMarkerTheme() {
   const dark = tokenColor('--bg').getHSL({}).l < 0.4;
@@ -1578,7 +1576,7 @@ function loop(now) {
   requestAnimationFrame(loop);
   if (anim) { anim(now); needs = true; }
   const changed = controls.update();
-  if (needs || changed) { renderer.render(scene, camera); updateLabels(); updateGuideLabels(); needs = false; }
+  if (needs || changed) { sizeMarkers(); renderer.render(scene, camera); updateLabels(); updateGuideLabels(); needs = false; }
 }
 
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);

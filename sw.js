@@ -1,5 +1,5 @@
 // offline cache: the model and libraries are kept after the first visit; the page itself is refreshed from the network when online
-const CACHE = 'atlas-b03fbd7e2c';
+const CACHE = 'atlas-e6768e5c4d';
 const CORE = ['./', 'index.html', 'anatomy.bin.gz', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png'];
 const LIBS = ['https://cdn.jsdelivr.net/npm/three@0.147.0/build/three.min.js',
   'https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/controls/OrbitControls.js'];

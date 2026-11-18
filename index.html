@@ -1072,10 +1072,29 @@ function dotTexture() {
 }
 const DOT = dotTexture();
 const DPR = () => renderer.getPixelRatio();
-const haloMat = new THREE.PointsMaterial({ size: 13, sizeAttenuation: false, map: DOT, alphaTest: 0.5, color: 0xffffff, transparent: false, toneMapped: false });
-const coreMat = new THREE.PointsMaterial({ size: 9, sizeAttenuation: false, map: DOT, alphaTest: 0.5, vertexColors: true, toneMapped: false });
-const selHaloMat = new THREE.PointsMaterial({ size: 22, sizeAttenuation: false, map: DOT, alphaTest: 0.5, color: 0xffffff, toneMapped: false });
-const selCoreMat = new THREE.PointsMaterial({ size: 15, sizeAttenuation: false, map: DOT, alphaTest: 0.5, vertexColors: true, toneMapped: false });
+function ringTexture(r0, r1, dot) {
+  // hollow ring with a small centre dot: the body under the acupoint stays visible
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const g = c.getContext('2d'); g.fillStyle = '#fff';
+  g.beginPath(); g.arc(64, 64, r1, 0, Math.PI * 2); g.arc(64, 64, r0, 0, Math.PI * 2, true); g.fill();
+  g.beginPath(); g.arc(64, 64, dot, 0, Math.PI * 2); g.fill();
+  const t = new THREE.CanvasTexture(c); return t;
+}
+const RING_HALO = ringTexture(34, 62, 17), RING_CORE = ringTexture(42, 54, 9);
+function liftToCamera(mat, cm) {
+  // draw the marker a little toward the viewer, so the surface it sits on never slices the disc,
+  // while parts of the body that are really in front still hide it
+  mat.onBeforeCompile = sh => {
+    sh.vertexShader = sh.vertexShader.replace('#include <project_vertex>',
+      '#include <project_vertex>\n  mvPosition.xyz += normalize( -mvPosition.xyz ) * ' + cm.toFixed(2) + ';\n  gl_Position = projectionMatrix * mvPosition;');
+  };
+  mat.customProgramCacheKey = () => 'lift-' + cm;
+  return mat;
+}
+const haloMat = liftToCamera(new THREE.PointsMaterial({ size: 19, sizeAttenuation: false, map: RING_HALO, alphaTest: 0.5, color: 0xffffff, transparent: false, toneMapped: false }), 1.0);
+const coreMat = liftToCamera(new THREE.PointsMaterial({ size: 19, sizeAttenuation: false, map: RING_CORE, alphaTest: 0.5, vertexColors: true, toneMapped: false }), 1.0);
+const selHaloMat = liftToCamera(new THREE.PointsMaterial({ size: 28, sizeAttenuation: false, map: RING_HALO, alphaTest: 0.5, color: 0xffffff, toneMapped: false }), 1.0);
+const selCoreMat = liftToCamera(new THREE.PointsMaterial({ size: 28, sizeAttenuation: false, map: RING_CORE, alphaTest: 0.5, vertexColors: true, toneMapped: false }), 1.0);
 const markerGroup = new THREE.Group(); scene.add(markerGroup);
 let haloPts, corePts, selHalo, selCore;
 function visibleInst() { return INST.filter(i => (merFilter === 'ALL' || i.pt.mer === merFilter) && (!starOnly || i.pt.star) && (!pickOnly || picks.has(i.pt.code))); }
@@ -1103,7 +1122,7 @@ function buildMarkers() {
 }
 function sizeMarkers() {
   const k = DPR();
-  haloMat.size = 13 * k; coreMat.size = 9 * k; selHaloMat.size = 22 * k; selCoreMat.size = 15 * k;
+  haloMat.size = 19 * k; coreMat.size = 19 * k; selHaloMat.size = 28 * k; selCoreMat.size = 28 * k;
 }
 function updateSelMarker() {
   if (!selHalo) return;
